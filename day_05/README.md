@@ -1,0 +1,1 @@
+Man, had a real tough time with this one due to unclear requirements on how position modes would or would not be provided. Ended up starting over a few times before finally breaking things out into their own classes so I could view/unify the logic clearly
