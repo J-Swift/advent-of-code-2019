@@ -1,0 +1,1 @@
+I'm not sure if I should blame the poorly written instructions on today or previous days, but clearly there was not enough detail / false information in one of the two. Spun wheels on part 1 for a long time trying to debug what turned out to be silently changing requirements (e.g. commands '201' and '21101').
