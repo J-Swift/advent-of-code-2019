@@ -1,0 +1,1 @@
+Had to revisit lots of math concepts, then did a lot of debugging on why my calculations were wrong in part 2. Ended up being due to an inverted coordinate system, which I realized when doing part 1 but forgot about before I did part 2.
