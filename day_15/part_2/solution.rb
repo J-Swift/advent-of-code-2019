@@ -2,7 +2,7 @@
 
 FILENAME='input.txt'
 DEBUG=ENV.fetch('DEBUG', false)
-DRAW_BOARD=ENV.fetch('DRAW_BOARD', false)
+$draw_board=ENV.fetch('DRAW_BOARD', false)
 DONE=Object.new.freeze
 
 class MemorySpace
@@ -323,118 +323,258 @@ class IntCodeProgram
     end
 end
 
+require 'set'
 class GameWrapper
-    attr_accessor :current_score
+    DIRECTIONS = [:east, :west, :south, :north]
 
     def initialize
         @gameboard = []
-        @current_score = 0
+        @initial_space = [1000, 1000]
+        @current_position = @initial_space.dup
+        @oxygen_position = nil
+        @best_oxygen_length = nil
+        @unknowns = Set.new
+        DIRECTIONS.each do |dir|
+            @unknowns << current_position_offset_in_direction(dir)
+        end
+        set_space(@current_position, :visited)
+
+        # @gameboard = [
+        #     [nil, nil, nil],
+        #     [nil, :visited, nil],
+        #     [nil, :visited, nil],
+        #     [nil, :visited, nil],
+        #     [nil, nil, nil],
+        # ]
+        # @initial_space = [1, 3]
+        # @current_position = [1, 1]
+        # @oxygen_position = nil
+        # @best_oxygen_length = nil
+        # @unknowns = Set.new
+        # DIRECTIONS.each do |dir|
+        #     @unknowns << current_position_offset_in_direction(dir)
+        # end
+        # # set_space(@current_position, :visited)
+        # puts pathfind_from_current([2, 3]).inspect
+        # exit
     end
 
     def print_result!
-        return unless DRAW_BOARD
+        return unless $draw_board
         str = "\e[H\e[2J"
-        str += @gameboard.map { |it| it.join('') }.join("\n")
+
+        @view_center ||= @initial_space.dup
+        if ((@view_center[0] - @current_position[0]).abs > 25)
+            @view_center[0] = @current_position[0]
+        end
+        if ((@view_center[1] - @current_position[1]).abs > 10)
+            @view_center[1] = @current_position[1]
+        end
+
+        cols = ((@view_center[1] - 25)..(@view_center[1]+25)).map do |y|
+            rows = ((@view_center[0] - 50)..(@view_center[0]+50)).map do |x|
+                space = get_space([x, y])
+
+                case
+                when space == :oxygen
+                    '!' 
+                when [x, y] == @current_position
+                    'O' 
+                when [x, y] == @initial_space
+                    '*' 
+                when space == :visited
+                    '-'
+                when space == :wall
+                    '#'
+                when @unknowns.member?([x, y])
+                    '?'
+                when space == :unknown
+                    ' '
+                end
+            end
+            rows.join('')
+        end
+        str += cols.join("\n")
         str += "\n"
-        str += "SCORE #{current_score}"
+        str += @current_position.inspect
         puts str
-        sleep(0.003)
     end
 
-    def get_paddle_coord
-        coord = []
-        @gameboard.each_with_index do |row, irow|
-            break if coord != []
-            row.each_with_index do |col, icol|
-                if col == SPACE_LOOKUP[:paddle]
-                    coord = [icol, irow]
-                    break
+    def sending_move(direction)
+        @last_direction = direction
+    end
+
+    def got_result(result)
+        next_position = current_position_offset_in_direction(@last_direction)
+        # puts "[#{next_position}] [#{result}]"
+
+        case result
+        when :wall
+            set_space(next_position, :wall)
+        when :moved
+            set_space(next_position, :visited)
+            DIRECTIONS.each do |dir|
+                surrounding_pos = position_offset_in_direction(next_position, dir)
+                if get_space(surrounding_pos) == :unknown
+                    @unknowns << surrounding_pos.dup
+                end
+            end
+            @current_position = next_position
+        when :oxygen
+            set_space(next_position, :oxygen)
+            DIRECTIONS.each do |dir|
+                surrounding_pos = position_offset_in_direction(next_position, dir)
+                if get_space(surrounding_pos) == :unknown
+                    @unknowns << surrounding_pos.dup
+                end
+            end
+            @current_position = next_position
+
+            @oxygen_position = next_position.dup
+        else
+            raise "Unknown result [#{result}]"
+        end
+    end
+
+    def pathfind_from_current(to)
+        pathfind(@current_position, to)
+    end
+
+    def pathfind(from, to)
+        visited_results = {}
+        to_search = [from]
+
+        while true
+            cur_pos = to_search.shift or raise 'No more points to check!'
+            cur_path = visited_results[cur_pos] || []
+            surrounding_pos = DIRECTIONS.map do |dir|
+                resulting_path = cur_path.dup
+                resulting_path << dir
+                new_pos = position_offset_in_direction(cur_pos, dir)
+                return resulting_path if new_pos == to
+                [dir, new_pos, resulting_path]
+            end
+            surrounding_pos.select! { |_, pos| ![:wall, :unknown].member?(get_space(pos)) && !visited_results[pos] }
+            surrounding_pos.each do |_, new_pos, resulting_path|
+                visited_results[new_pos] = resulting_path
+                to_search << new_pos
+            end
+        end
+    end
+
+    def get_random_unvisited
+        if @unknowns.empty?
+            puts 'EXPLORED FULLY'
+            $draw_board = true
+            print_result!
+            calculate_oxygen!
+            exit 1
+        end
+
+        res = @unknowns.to_a.sample
+        @unknowns.delete(res)
+        res
+    end
+
+    private
+
+    def current_position_offset_in_direction(direction)
+        position_offset_in_direction(@current_position, direction)
+    end
+
+    def position_offset_in_direction(position, direction)
+        new_pos = position.dup
+        case direction
+        when :north
+            new_pos[1] -= 1
+        when :west
+            new_pos[0] -= 1
+        when :south
+            new_pos[1] += 1
+        when :east
+            new_pos[0] += 1
+        end
+        new_pos
+    end
+
+    def set_space(space, type)
+        row = @gameboard[space[1]] || []
+        row[space[0]] = type
+        @gameboard[space[1]] = row
+    end
+
+    def get_space(space)
+        row = @gameboard[space[1]] || []
+        row[space[0]] || :unknown
+    end
+
+    def calculate_oxygen!
+        all_non_walls = Set.new
+        @gameboard.each_with_index do |col, y|
+            col ||= []
+            col.each_with_index do |row, x|
+                if row && row != :wall
+                    all_non_walls << [x, y]
                 end
             end
         end
-        coord
-    end
 
-    def get_ball_coord
-        coord = []
-        @gameboard.each_with_index do |row, irow|
-            break if coord != []
-            row.each_with_index do |col, icol|
-                if col == SPACE_LOOKUP[:ball]
-                    coord = [icol, irow]
-                    break
+        queue = Set.new
+        visited = Set.new
+        queue.add(@oxygen_position)
+        visited.add(@oxygen_position)
+
+        tick = 0
+        while (all_non_walls - visited).size > 0
+            next_queue = Set.new
+            tick += 1
+            queue.each do |cur_pos|
+                potentials = DIRECTIONS.map { |dir| position_offset_in_direction(cur_pos, dir) }
+                potentials.select! { |it| all_non_walls.member?(it) && !visited.member?(it) }
+                potentials.each do |it|
+                    next_queue.add(it)
+                    visited.add(it)
                 end
             end
+            queue = next_queue
         end
-        coord
-    end
-
-    SPACE_LOOKUP = {
-        empty: ' ',
-        wall: 'X',
-        block: '.',
-        paddle: '-',
-        ball: 'o',
-    }
-
-    def set_space(x, y, obj_type)
-        char = SPACE_LOOKUP[obj_type]
-        row = @gameboard[y] || []
-        row[x] = char
-        @gameboard[y] = row
-        print_result!
+        puts "OXYGEN SPREAD IN [#{tick}] ticks"
     end
 end
 
 class GameInputSource
+    INPUTS = [:north, :south, :west, :east]
     def initialize(game_wrapper)
         @game_wrapper = game_wrapper
-        @current_state = :neutral
-    end
-
-    def set_state(state)
-        @current_state = state
+        @movement_path = []
+        @moving_to = nil
     end
 
     def get_input
-        ball = @game_wrapper.get_ball_coord
-        paddle = @game_wrapper.get_paddle_coord
-
-        ball[0]<=> paddle[0] 
+        if @movement_path.empty?
+            @game_wrapper.print_result!
+            @moving_to = @game_wrapper.get_random_unvisited
+            @movement_path = @game_wrapper.pathfind_from_current(@moving_to)
+        end
+        # puts "move [#{@moving_to}] #{@movement_path.inspect}]"
+        input = @movement_path.shift
+        @game_wrapper.sending_move(input)
+        INPUTS.find_index(input) + 1
     end
 end
 
 class GameOutputSource
     def initialize(game_wrapper)
         @game_wrapper = game_wrapper
-        @current_state = :waiting_x
-        @current_coord = []
     end
 
     TYPE_LOOKUP = {
-        0 => :empty,
-        1 => :wall,
-        2 => :block,
-        3 => :paddle,
-        4 => :ball,
+        0 => :wall,
+        1 => :moved,
+        2 => :oxygen,
     }
     def send_output(output)
-        case @current_state
-        when :waiting_x
-            @current_coord[0] = output.to_i
-            @current_state = :waiting_y
-        when :waiting_y
-            @current_coord[1] = output.to_i
-            @current_state = :waiting_type
-        when :waiting_type
-            if @current_coord == [-1, 0]
-                @game_wrapper.current_score = output.to_i
-            else
-                obj_type = TYPE_LOOKUP[output.to_i]
-                @game_wrapper.set_space(@current_coord[0], @current_coord[1], obj_type)
-            end
-            @current_state = :waiting_x
-        end
+        @game_wrapper.got_result(TYPE_LOOKUP[output.to_i])
     end
 end
 
@@ -448,9 +588,6 @@ def main
     game_wrapper = GameWrapper.new
     icp = IntCodeProgram.new(MemorySpace.new(program), GameInputSource.new(game_wrapper), GameOutputSource.new(game_wrapper))
     icp.run!
-
-    puts
-    puts "SCORE: #{game_wrapper.current_score}"
 end
 
 main
